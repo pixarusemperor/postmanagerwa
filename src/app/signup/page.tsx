@@ -39,15 +39,30 @@ export default function SignupPage() {
     }
 
     const slug = orgName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-    const { data: orgData, error: orgError } = await supabase
+    
+    // Insert without .select() — RLS INSERT policy allows it, but can't SELECT back
+    // because the user isn't a member yet (chicken-and-egg)
+    const { error: orgError } = await supabase
       .schema('pm')
       .from('organizations')
-      .insert({ name: orgName, slug, plan: 'free' })
+      .insert({ name: orgName, slug, plan: 'free' });
+
+    if (orgError) {
+      setError('Failed to create organization: ' + (orgError?.message || ''));
+      setLoading(false);
+      return;
+    }
+
+    // Now query to get the org ID — RLS allows SELECT because org exists
+    const { data: orgData, error: orgFetchError } = await supabase
+      .schema('pm')
+      .from('organizations')
       .select('id')
+      .eq('slug', slug)
       .single();
 
-    if (orgError || !orgData) {
-      setError('Failed to create organization: ' + (orgError?.message || ''));
+    if (orgFetchError || !orgData) {
+      setError('Organization created but could not be retrieved. Please sign in again.');
       setLoading(false);
       return;
     }
