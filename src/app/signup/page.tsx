@@ -30,6 +30,14 @@ export default function SignupPage() {
       return;
     }
 
+    // Sign in immediately so RLS has auth.uid() available
+    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+    if (signInError) {
+      setError('Account created but login failed. Please sign in manually.');
+      setLoading(false);
+      return;
+    }
+
     const slug = orgName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     const { data: orgData, error: orgError } = await supabase
       .schema('pm')
