@@ -1,0 +1,78 @@
+# =============================================================================
+# Coolify Deploy — postmanagerwa
+# =============================================================================
+
+name: Deploy to Coolify
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: coolify-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+
+      - name: Trigger Coolify deploy
+        env:
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
+          APP_UUID: "yamq89x5mlekrg6xughh3t83"
+        run: |
+          set -euo pipefail
+          echo "==> Triggering instant deploy for app ${APP_UUID}"
+          RESPONSE=$(curl -k -s -S --fail-with-body \
+            -X PATCH \
+            -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -d '{"instant_deploy": true}' \
+            "https://coolifyone.orizongroup.online/api/v1/applications/${APP_UUID}")
+          echo "==> API response:"
+          echo "${RESPONSE}" | jq .
+          DEPLOY_UUID=$(echo "${RESPONSE}" | jq -r '.deployment_uuid // .uuid // "unknown"')
+          echo "deployment_uuid=${DEPLOY_UUID}" >> "${GITHUB_OUTPUT}"
+        id: trigger
+
+      - name: Wait for deployment
+        env:
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
+          APP_UUID: "yamq89x5mlekrg6xughh3t83"
+        run: |
+          set -euo pipefail
+          MAX_ATTEMPTS=40
+          INTERVAL=15
+          echo "==> Polling deployment status for app ${APP_UUID}"
+          for i in $(seq 1 ${MAX_ATTEMPTS}); do
+            echo "--- Attempt ${i}/${MAX_ATTEMPTS} at $(date -u +%H:%M:%S) UTC ---"
+            RESPONSE=$(curl -k -s -S \
+              -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
+              -H "Accept: application/json" \
+              "https://coolifyone.orizongroup.online/api/v1/deployments/applications/${APP_UUID}")
+            STATUS=$(echo "${RESPONSE}" | jq -r '.deployments[0].status // "unknown"')
+            echo "Current status: ${STATUS}"
+            case "${STATUS}" in
+              finished)
+                echo "✓ DEPLOY SUCCEEDED"
+                exit 0
+                ;;
+              failed)
+                echo "✗ DEPLOY FAILED"
+                echo "${RESPONSE}" | jq .
+                exit 1
+                ;;
+              *)
+                echo "Deployment in progress… waiting ${INTERVAL} s"
+                sleep ${INTERVAL}
+                ;;
+            esac
+          done
+          echo "✗ TIMEOUT"
+          exit 1
