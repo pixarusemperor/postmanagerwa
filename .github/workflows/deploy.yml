@@ -24,7 +24,7 @@ jobs:
       - name: Trigger Coolify deploy
         env:
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
-          APP_UUID: "yamq89x5mlekrg6xughh3t83"
+          APP_UUID: "on1ilm4g5c6ky7y27y2q0hac"
         run: |
           set -euo pipefail
           echo "==> Triggering instant deploy for app ${APP_UUID}"
@@ -44,7 +44,7 @@ jobs:
       - name: Wait for deployment
         env:
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
-          APP_UUID: "yamq89x5mlekrg6xughh3t83"
+          APP_UUID: "on1ilm4g5c6ky7y27y2q0hac"
         run: |
           set -euo pipefail
           MAX_ATTEMPTS=40
