@@ -1,8 +1,8 @@
 # =============================================================================
-# Coolify Deploy — postmanagerwa
+# Build, Push to GHCR, Deploy to Coolify — PostManagerwa
 # =============================================================================
 
-name: Deploy to Coolify
+name: Build and Deploy
 
 on:
   push:
@@ -14,65 +14,52 @@ concurrency:
   group: coolify-deploy-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
 
     steps:
 
-      - name: Trigger Coolify deploy
-        env:
-          COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
-          APP_UUID: "on1ilm4g5c6ky7y27y2q0hac"
-        run: |
-          set -euo pipefail
-          echo "==> Triggering instant deploy for app ${APP_UUID}"
-          RESPONSE=$(curl -k -s -S --fail-with-body \
-            -X PATCH \
-            -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -H "Accept: application/json" \
-            -d '{"instant_deploy": true}' \
-            "https://coolifyone.orizongroup.online/api/v1/applications/${APP_UUID}")
-          echo "==> API response:"
-          echo "${RESPONSE}" | jq .
-          DEPLOY_UUID=$(echo "${RESPONSE}" | jq -r '.deployment_uuid // .uuid // "unknown"')
-          echo "deployment_uuid=${DEPLOY_UUID}" >> "${GITHUB_OUTPUT}"
-        id: trigger
+      - uses: actions/checkout@v4
 
-      - name: Wait for deployment
-        env:
-          COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
-          APP_UUID: "on1ilm4g5c6ky7y27y2q0hac"
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          build-args: |
+            NEXT_PUBLIC_SUPABASE_URL=${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+            NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL }}
+            NEXT_PUBLIC_R2_PUBLIC_URL=${{ vars.NEXT_PUBLIC_R2_PUBLIC_URL }}
+
+      - name: Deploy to Coolify
         run: |
-          set -euo pipefail
-          MAX_ATTEMPTS=40
-          INTERVAL=15
-          echo "==> Polling deployment status for app ${APP_UUID}"
-          for i in $(seq 1 ${MAX_ATTEMPTS}); do
-            echo "--- Attempt ${i}/${MAX_ATTEMPTS} at $(date -u +%H:%M:%S) UTC ---"
-            RESPONSE=$(curl -k -s -S \
-              -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
-              -H "Accept: application/json" \
-              "https://coolifyone.orizongroup.online/api/v1/deployments/applications/${APP_UUID}")
-            STATUS=$(echo "${RESPONSE}" | jq -r '.deployments[0].status // "unknown"')
-            echo "Current status: ${STATUS}"
-            case "${STATUS}" in
-              finished)
-                echo "✓ DEPLOY SUCCEEDED"
-                exit 0
-                ;;
-              failed)
-                echo "✗ DEPLOY FAILED"
-                echo "${RESPONSE}" | jq .
-                exit 1
-                ;;
-              *)
-                echo "Deployment in progress… waiting ${INTERVAL} s"
-                sleep ${INTERVAL}
-                ;;
-            esac
-          done
-          echo "✗ TIMEOUT"
-          exit 1
+          echo "==> Triggering Coolify redeploy"
+          curl -k -s -S --fail-with-body \
+            -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.COOLIFY_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"instant_deploy":true}' \
+            "https://coolifyone.orizongroup.online/api/v1/applications/on1ilm4g5c6ky7y27y2q0hac"
+          echo "==> Deploy triggered"
