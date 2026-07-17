@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client-browser';
 import { useRouter } from 'next/navigation';
 
@@ -11,79 +11,95 @@ export default function SignupPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
-  const supabase = createClient();
+  const supabaseRef = useRef(createClient());
+  const supabase = supabaseRef.current;
 
   async function handleSignup(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError('');
+    let orgId: string | null = null;
 
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
-    });
-
-    if (authError || !authData.user) {
-      setError(authError?.message || 'Signup failed');
-      setLoading(false);
-      return;
-    }
-
-    // Sign in immediately so RLS has auth.uid() available
-    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-    if (signInError) {
-      setError('Account created but login failed. Please sign in manually.');
-      setLoading(false);
-      return;
-    }
-
-    const slug = orgName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-    
-    // Insert without .select() — RLS INSERT policy allows it, but can't SELECT back
-    // because the user isn't a member yet (chicken-and-egg)
-    const { error: orgError } = await supabase
-      .schema('pm')
-      .from('organizations')
-      .insert({ name: orgName, slug, plan: 'free' });
-
-    if (orgError) {
-      setError('Failed to create organization: ' + (orgError?.message || ''));
-      setLoading(false);
-      return;
-    }
-
-    // Now query to get the org ID — RLS allows SELECT because org exists
-    const { data: orgData, error: orgFetchError } = await supabase
-      .schema('pm')
-      .from('organizations')
-      .select('id')
-      .eq('slug', slug)
-      .single();
-
-    if (orgFetchError || !orgData) {
-      setError('Organization created but could not be retrieved. Please sign in again.');
-      setLoading(false);
-      return;
-    }
-
-    const { error: memberError } = await supabase
-      .schema('pm')
-      .from('organization_members')
-      .insert({
-        organization_id: orgData.id,
-        user_id: authData.user.id,
-        role: 'admin',
+    try {
+      // Step 1: Sign up
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
       });
 
-    if (memberError) {
-      setError('Organization created but failed to add you as a member. Please contact support.');
-      setLoading(false);
-      return;
-    }
+      if (authError || !authData.user) {
+        setError(authError?.message || 'Signup failed. Please try again.');
+        setLoading(false);
+        return;
+      }
 
-    router.push('/products');
-    setLoading(false);
+      // Step 2: Sign in so RLS has auth.uid()
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+      if (signInError) {
+        setError('Account created but auto-login failed. Please sign in manually.');
+        setLoading(false);
+        return;
+      }
+
+      // Step 3: Create organization
+      const slug = orgName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const { error: orgError } = await supabase
+        .schema('pm')
+        .from('organizations')
+        .insert({ name: orgName, slug, plan: 'free' });
+
+      if (orgError) {
+        const msg = orgError.code === '23505'
+          ? 'This organization name is already taken. Please choose a different one.'
+          : 'Failed to create organization: ' + (orgError.message || 'Unknown error');
+        setError(msg);
+        setLoading(false);
+        return;
+      }
+
+      // Step 4: Fetch the org by slug
+      const { data: orgData, error: orgFetchError } = await supabase
+        .schema('pm')
+        .from('organizations')
+        .select('id')
+        .eq('slug', slug)
+        .single();
+
+      if (orgFetchError || !orgData) {
+        setError('Organization created but could not be retrieved. Please sign in again.');
+        setLoading(false);
+        return;
+      }
+      orgId = orgData.id;
+
+      // Step 5: Add user as admin member
+      const { error: memberError } = await supabase
+        .schema('pm')
+        .from('organization_members')
+        .insert({
+          organization_id: orgId,
+          user_id: authData.user.id,
+          role: 'admin',
+        });
+
+      if (memberError) {
+        // Rollback: delete the org we just created
+        await supabase.schema('pm').from('organizations').delete().eq('id', orgId);
+        setError('Failed to set up your organization membership. Please try signing up again.');
+        setLoading(false);
+        return;
+      }
+
+      router.push('/products');
+    } catch {
+      // Rollback org if it was created
+      if (orgId) {
+        try { await supabase.schema('pm').from('organizations').delete().eq('id', orgId); } catch {}
+      }
+      setError('Connection failed. Please check your internet and try again.');
+      setLoading(false);
+    }
   }
 
   return (

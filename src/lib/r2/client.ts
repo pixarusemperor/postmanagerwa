@@ -27,7 +27,9 @@ export function getBucketName(): string {
 }
 
 export function getPublicUrl(): string {
-  return process.env.NEXT_PUBLIC_R2_PUBLIC_URL || process.env.R2_PUBLIC_URL || '';
+  const url = process.env.NEXT_PUBLIC_R2_PUBLIC_URL || process.env.R2_PUBLIC_URL;
+  if (!url) throw new Error('R2 public URL not configured. Set NEXT_PUBLIC_R2_PUBLIC_URL.');
+  return url;
 }
 
 export async function getUploadPresignedUrl(

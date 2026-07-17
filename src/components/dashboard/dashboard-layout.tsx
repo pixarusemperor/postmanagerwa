@@ -6,7 +6,7 @@ import { useAuth } from '@/lib/auth/auth-context';
 import {
   Package, Megaphone, FileText, Target, Users, Settings,
   MessageCircle, Workflow, Inbox, LogOut, ChevronDown,
-  LayoutDashboard, Upload, Tag, Brain, Menu, X,
+  LayoutDashboard, Upload, Tag, Brain, Menu, X, Phone,
 } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 
@@ -34,6 +34,7 @@ const navGroups = [
   {
     label: 'Settings',
     items: [
+      { href: '/contacts', label: 'Contacts', icon: Phone },
       { href: '/settings/discounts', label: 'Discounts', icon: Tag },
       { href: '/settings/ai', label: 'AI Config', icon: Brain },
       { href: '/settings', label: 'Settings', icon: Settings },

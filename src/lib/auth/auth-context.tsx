@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo, type ReactNode } from 'react';
 import { createClient } from '@/lib/supabase/client-browser';
 import { useRouter, usePathname } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
@@ -35,7 +35,7 @@ const AuthContext = createContext<AuthContextType>({
 const PUBLIC_PATHS = ['/login', '/signup', '/auth/callback'];
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
   const pathname = usePathname();
   const [user, setUser] = useState<User | null>(null);
@@ -44,11 +44,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const orgRef = useRef<OrgInfo | null>(null);
+  const loadingRef = useRef(true);
 
   // Keep ref in sync with state so loadOrgs always reads latest org
   orgRef.current = org;
 
-  const isPublicPath = PUBLIC_PATHS.some(p => pathname.startsWith(p));
+  const isPublicPath = PUBLIC_PATHS.includes(pathname);
 
   const loadOrgs = useCallback(async (userId: string) => {
     try {
@@ -61,6 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (memError) {
         setError('Failed to load organizations');
         setLoading(false);
+        loadingRef.current = false;
         return;
       }
 
@@ -78,8 +80,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setError('Failed to load organizations');
     }
     setLoading(false);
+    loadingRef.current = false;
   }, [supabase]);
 
+  // Effect 1: Auth listener — runs once, never resubscribes
   useEffect(() => {
     let cancelled = false;
 
@@ -92,15 +96,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loadOrgs(sessionUser.id);
       } else {
         setLoading(false);
-        // Redirect unauthenticated users to login (skip public pages + callback)
-        if (!isPublicPath && pathname !== '/auth/callback') {
-          router.push('/login');
-        }
+        loadingRef.current = false;
       }
     }).catch(() => {
       if (!cancelled) {
         setError('Authentication service unavailable');
         setLoading(false);
+        loadingRef.current = false;
       }
     });
 
@@ -115,9 +117,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setOrg(null);
         setOrgs([]);
         setLoading(false);
-        if (!isPublicPath) {
-          router.push('/login');
-        }
+        loadingRef.current = false;
       }
     });
 
@@ -125,7 +125,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       subscription.unsubscribe();
     };
-  }, [isPublicPath, pathname, router, loadOrgs, supabase]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Effect 2: Reactive redirect logic — responds to pathname changes
+  useEffect(() => {
+    if (loadingRef.current) return;
+    if (!user && !isPublicPath) {
+      router.push('/login');
+    } else if (user && isPublicPath) {
+      router.push('/products');
+    }
+  }, [user, isPublicPath, router]);
 
   async function switchOrg(orgId: string) {
     const found = orgs.find(o => o.id === orgId);
